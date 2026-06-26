@@ -1,0 +1,25 @@
+# Python Virtual Environments
+venv/
+ENV/
+env/
+.venv/
+
+# Python caching and compiled byte-code
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local database and raw tracking files (Cloud handles these now)
+*.db-journal
+*.db-wal
+
+# 🔐 SECURITY SAFEGUARD (CRITICAL)
+# This completely blocks your local Google private key file from going public
+google_keys.json
+
+# Operating System files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

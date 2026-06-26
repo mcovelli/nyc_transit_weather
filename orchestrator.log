@@ -1,0 +1,8 @@
+Starting master orchestration engine with explicit interval loops...
+09:41:17.278 | INFO    | prefect - Starting temporary server on http://127.0.0.1:8846
+See https://docs.prefect.io/v3/concepts/server#how-to-guides for more information on running a dedicated Prefect server.
+🚀 Runner loop active! Waiting for the schedules to tick...
+/Users/mike/nyc_transit_weather/scripts/main.py:55: RuntimeWarning: coroutine 'Runner.start' was never awaited
+  runner.start()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+09:41:19.735 | INFO    | prefect - Stopping temporary server on http://127.0.0.1:8846

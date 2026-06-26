@@ -1,0 +1,87 @@
+name: Hourly NYC Transit Pipeline
+
+concurrency:
+  group: nyc-transit-pipeline
+  cancel-in-progress: true
+
+# 1. The Schedule (The Trigger)
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:    # This adds a "Run Now" button to GitHub page for testing manually
+
+jobs:
+  run-data-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Grants the server permission to save data back to your repo
+    env:
+      # Optional: set this to a branch name (e.g. data-lakehouse) to push generated data to a separate branch
+      DATA_BRANCH: ''
+
+    steps:
+      # Step A: Download code onto the cloud server
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # fetch full history to rebase/push safely
+          persist-credentials: true
+
+      # Step B: Install Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13' 
+
+      # Step C: Install libraries
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Step D: Run script
+      - name: Execute Pipeline
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          PREFECT_API_ENABLE_TELEMETRY: "False"
+        run: python scripts/run_cloud_pipeline.py
+
+      # Step E: Save the generated data back to GitHub before the server explodes
+      - name: Commit and Push Data to Repository
+        run: |
+          set -euo pipefail
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage generated data
+          git add data_lakehouse/
+
+          # Commit the data; capture exit code to handle "no changes" gracefully
+          if git commit -m "🤖 Auto-update: Appended hourly pipeline data"; then
+            echo "Committed new data"
+          else
+            echo "No new data to commit"
+            exit 0
+          fi
+
+          # Make sure we have the latest remote main so we can rebase local commits on top
+          git fetch origin main
+
+          # Attempt to rebase local commits onto origin/main to avoid non-fast-forward errors
+          if ! git rebase origin/main; then
+            echo "Rebase failed; aborting rebase and trying a merge pull as fallback"
+            git rebase --abort || true
+            
+            # 🚀 THE FIX: -X ours tells Git to force-resolve binary conflicts by keeping the Action's new data
+            if ! git pull --no-rebase -X ours origin main; then
+              echo "Unable to integrate remote changes automatically. Failing to avoid overwriting remote history."
+              exit 1
+            fi
+          fi
+
+          # Push changes (fast-forward push expected). If push fails, attempt a safe force with lease as last resort.
+          if ! git push origin HEAD:main; then
+            echo "Push failed; attempting force-with-lease"
+            git push --force-with-lease origin HEAD:main
+          fi
