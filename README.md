@@ -1,3 +1,5 @@
+*Note: needs fixing to join live data*
+
 # 🚋 NYC Transit & Weather
 
 **Automated Transit & Weather Data Pipeline**  
