@@ -33,6 +33,9 @@ def transform_historical_weather(raw_data):
     # 1. Format timestamps and create an endTime (1 hour blocks)
     df['startTime'] = pd.to_datetime(df['startTime'], utc=True)
     df['endTime'] = df['startTime'] + pd.Timedelta(hours=1)
+
+    # convert temp to fahrenheit and round to 2 decimal places
+    df['temperature'] = round((df['temperature'] * 1.8) + 32, 2)
     
     # 2. Map WMO Weather Codes to your 'shortForecast' text so it matches NWS!
     # (Simplified mapping for standard NYC weather events)

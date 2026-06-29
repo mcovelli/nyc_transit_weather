@@ -39,6 +39,9 @@ def transform_weather_data():
         if 'endTime' in df.columns:
             df['endTime'] = pd.to_datetime(df['endTime'], errors='coerce')
 
+        # round temp to 2 decimal places
+        df['temperature'] = round(df['temperature'], 2)
+
         # Enforce the required column order
         required_columns = ['startTime', 'endTime', 'temperature', 'shortForecast']
 
