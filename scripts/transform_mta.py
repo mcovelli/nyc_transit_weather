@@ -77,6 +77,10 @@ def transform_mta_data():
             merged_df['start'] = pd.to_datetime(merged_df['start'], unit='s', errors="coerce") # Handle potential invalid timestamps gracefully
         elif 'end' in merged_df.columns:
             merged_df['end'] = pd.to_datetime(merged_df['end'], unit='s', errors="coerce") # Handle potential invalid timestamps gracefully
+        
+        # Enforce the required column order
+        required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text']
+        merged_df = merged_df[required_columns]
 
         # Check if there are any null values in the "routeId" column of the merged DataFrame, and if so, attempt to extract a route ID from the header text using a regular expression pattern that matches typical route ID formats, and fill in the "routeId" column for the rows where it is null with the extracted route ID or "SYSTEM_WIDE" if no route ID is found, ensuring that we handle potential missing fields gracefully and provide informative output if no route ID is found in the header text
         if merged_df['routeId'].isnull().any():
@@ -131,9 +135,7 @@ def mta_silver_pipeline():
     final_df = transform_mta_data()
 
     if final_df is not None:
-
-        # clean schema and drop duplicate rows
-        final_df = final_df.drop(columns=['stopId'], errors='ignore').drop_duplicates()
+        final_df = final_df.drop_duplicates()
         save_mta_clean(final_df)
     else:
         print("Pipeline Stopped. Could not retrieve or transform mta data.")

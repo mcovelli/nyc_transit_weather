@@ -33,13 +33,18 @@ def transform_weather_data():
     if weather_data:
         # Convert the relevant part of the weather data to a DataFrame for analysis
         df = pd.DataFrame(weather_data.get("properties", {}).get("periods", [])) # Prevent KeyError if "properties" or "periods" is missing
-        df = df.drop(['icon', 'temperatureTrend', 'number', 'name', 'dewpoint', 'relativeHumidity', 'windDirection'], errors='ignore')
+
         if 'startTime' in df.columns:
             df['startTime'] = pd.to_datetime(df['startTime'], errors='coerce')
         if 'endTime' in df.columns:
             df['endTime'] = pd.to_datetime(df['endTime'], errors='coerce')
-        print(df.head())
+
+        # Enforce the required column order
+        required_columns = ['startTime', 'endTime', 'temperature', 'shortForecast']
+
+        df = df[required_columns]
         return df
+    
     else:
         print("No weather data available to transform.")
         return None
