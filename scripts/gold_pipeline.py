@@ -110,10 +110,10 @@ def combine_tables(weather_data, mta_data):
     print("✅ Duplicates Dropped")
     
     # Convert and Sort
-    mta_data_aligned['start'] = pd.to_datetime(mta_data_aligned['start'], errors='coerce', utc=True)
+    mta_data_aligned['start'] = pd.to_datetime(mta_data_aligned['start'], format='mixed', errors='coerce', utc=True)
     mta_data_aligned = mta_data_aligned.dropna(subset=['start']).sort_values('start')
     
-    weather_data['startTime'] = pd.to_datetime(weather_data['startTime'], errors='coerce', utc=True)
+    weather_data['startTime'] = pd.to_datetime(weather_data['startTime'], format='mixed', errors='coerce', utc=True)
     weather_data = weather_data.dropna(subset=['startTime']).sort_values('startTime')
 
     # Time-Series Merge
