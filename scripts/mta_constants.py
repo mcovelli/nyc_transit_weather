@@ -1,0 +1,1 @@
+keywords = ['storm', 'snow', 'heavy rain', 'blizzard', 'weather', 'flood', 'wind', 'hurricane', 'rain', 'icing', 'icy', 'ice']

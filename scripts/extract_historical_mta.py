@@ -23,7 +23,7 @@ def fetch_mta_data():
     while True:
 
         params = {
-            "$where": "agency = 'Subway' AND ((header LIKE '%storm%' OR header LIKE '%snow%' OR header LIKE '%flood%' OR header LIKE '%weather%' OR header LIKE '%wind%' OR header LIKE '%blizzard%' OR header LIKE '%hurricane%' OR header LIKE '%heavy rain%' OR header LIKE '% rain%') OR (description LIKE '%storm%' OR description LIKE '%snow%' OR description LIKE '%flood%' OR description LIKE '%weather%' OR description LIKE '%wind%' OR description LIKE '%blizzard%' OR description LIKE '%hurricane%' OR description LIKE '%heavy rain%' OR description LIKE '% rain%'))",
+            "$where": "agency = 'Subway' AND ((header LIKE '%storm%' OR header LIKE '%snow%' OR header LIKE '%flood%' OR header LIKE '%weather%' OR header LIKE '%wind%' OR header LIKE '%blizzard%' OR header LIKE '%hurricane%' OR header LIKE '%heavy rain%' OR header LIKE '% rain%' OR header LIKE '%icy%' OR header LIKE '%icing%') OR (description LIKE '%storm%' OR description LIKE '%snow%' OR description LIKE '%flood%' OR description LIKE '%weather%' OR description LIKE '%wind%' OR description LIKE '%blizzard%' OR description LIKE '%hurricane%' OR description LIKE '%heavy rain%' OR description LIKE '% rain%' OR description LIKE '%icy%' OR description LIKE '%icing%'))",
             "$limit": 50000,
             "$offset": offset
         }

@@ -6,6 +6,7 @@ import glob
 from datetime import datetime, timedelta
 import re
 from zoneinfo import ZoneInfo
+from mta_constants import keywords
 
 @task
 def read_latest_bronze_mta_data():
@@ -79,7 +80,7 @@ def transform_mta_data():
             merged_df['end'] = pd.to_datetime(merged_df['end'], unit='s', errors="coerce") # Handle potential invalid timestamps gracefully
         
         # Enforce the required column order
-        required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text']
+        required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text', 'alert_reason']
         merged_df = merged_df[required_columns]
 
         # Check if there are any null values in the "routeId" column of the merged DataFrame, and if so, attempt to extract a route ID from the header text using a regular expression pattern that matches typical route ID formats, and fill in the "routeId" column for the rows where it is null with the extracted route ID or "SYSTEM_WIDE" if no route ID is found, ensuring that we handle potential missing fields gracefully and provide informative output if no route ID is found in the header text
@@ -105,10 +106,21 @@ def transform_mta_data():
     # After processing all alerts, concatenate the individual DataFrames in the all_alerts list into a single DataFrame, ensuring that we handle the case where no valid alert pairs were found to combine
     if all_alerts:
         final_df = pd.concat(all_alerts, ignore_index=True)
+
+        new_keywords = [r'\b' + k + r'\b' if k in ['ice', 'icing', 'icy', 'rain', 'wind'] else k for k in keywords]
+        string = ", ".join(new_keywords)
+        pattern = r'(?i)' + '(' + string.replace(", ", "|") + ')' 
+
+        final_df['alert_reason'] = final_df['description_text'].str.extract(pattern)
+        final_df = final_df[final_df['alert_reason'].notna()]
+        final_df['alert_reason'] = final_df['alert_reason'].str.lower()
+
         return final_df
     else:
         print("No valid alert pairs were found to combine.")
         return None
+    
+
 
 @task  
 def save_mta_clean(final_df):
