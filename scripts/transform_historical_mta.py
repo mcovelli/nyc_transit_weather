@@ -65,7 +65,11 @@ def transform_historical_mta_data(mta_data):
     # Enforce the final required column order
     required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text', 'alert_reason']
 
-    new_keywords = [r'\b' + k + r'\b' if k in ['ice', 'icing', 'icy', 'rain', 'wind'] else k for k in keywords]
+    mask = clean_hist['description_text'].str.contains(r'\brains?\b', case=False, na=False)
+    clean_hist['alert_reason'] = clean_hist.loc[mask, 'description_text'].str
+    
+
+    new_keywords = [r'\b' + k + r's?\b' if k in ['ice', 'icing', 'icy', 'rain', 'wind'] else k for k in keywords]
     string = ", ".join(new_keywords)
     pattern = r'(?i)' + '(' + string.replace(", ", "|") + ')' 
 
