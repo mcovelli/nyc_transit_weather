@@ -19,6 +19,16 @@ Data pipeline using live data from the National Weather Service (NWS) and the Me
 
 This repo is designed to be cloned and run standalone: everyone who clones it gets their own local MySQL database and their own scheduled pipeline — nothing is shared between clones, and no cloud credentials are required except the optional Google Sheets sync.
 
+### What's in the Gold MySQL database
+
+| Table / View | What it's for |
+| --- | --- |
+| `gold_transit_weather_fact` | One row per MTA alert that was actually attributed to weather. `alert_reason` is the cause MTA itself gave (extracted from the alert's header/description text, e.g. `snow`, `hurricane`, `wind`) — this is what explains a delay, including the days after a storm has passed but cleanup is still disrupting service. `temperature`/`shortForecast` are the point-in-time forecast when the alert was posted (context, not cause). |
+| `gold_daily_transit_weather_summary` | One row per (day, route): total alerts, average temperature, `typical_conditions_that_day`, and `primary_weather_cause` — the most common stated cause that day. |
+| `view_weather_impact` | A read-friendly projection over the fact table (`weather_cause`, `conditions_at_alert_time`, the original alert text), filtered to only rows with an attributed cause. This is what gets exported to CSV/Google Sheets. |
+
+Only `description_text`/`header_text` matching a known weather term (`scripts/mta_constants.py`) ever gets a `weather_cause` — every other MTA alert (broken windows, signal problems, planned service changes, etc.) is filtered out before it reaches the Gold layer, so this table stays a clean record of weather-impacted service.
+
 ---
 
 ## 📋 Table of Contents

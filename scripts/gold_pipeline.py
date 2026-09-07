@@ -7,6 +7,7 @@ import gspread
 import json
 
 from db import get_engine
+from weather_cause import extract_alert_reason
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 silver_dir = os.path.join(base_dir, "..", "data_lakehouse", "silver")
@@ -98,13 +99,24 @@ def read_latest_silver_weather_data():
         
 @task
 def combine_tables(weather_data, mta_data):
-    required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text']
+    required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text', 'alert_reason']
 
     # Align and Clean
     for col in required_columns:
         if col not in mta_data.columns:
             mta_data[col] = pd.NA
     mta_data_aligned = mta_data[required_columns].copy()
+
+    # Recompute alert_reason directly from the alert text rather than trusting
+    # whatever is already in the silver CSV - some older snapshots predate
+    # weather-filtering entirely and would otherwise let non-weather alerts
+    # (broken windows, signal problems, planned service changes, etc.) leak
+    # into the Gold layer just because they landed near some weather reading.
+    mta_data_aligned['alert_reason'] = mta_data_aligned.apply(
+        lambda row: extract_alert_reason(row['header_text'], row['description_text']), axis=1
+    )
+    mta_data_aligned = mta_data_aligned[mta_data_aligned['alert_reason'].notna()]
+    print(f"✅ Filtered to {len(mta_data_aligned)} weather-related alerts")
 
     # Drop duplicates
     mta_data_aligned = mta_data_aligned.drop_duplicates(subset=['entity_id', 'start', 'routeId'])
@@ -149,8 +161,15 @@ def summarize(gold_df):
     summary_df = gold_df.groupby(['alert_date', 'routeId']).agg({
         'entity_id': 'nunique', # total unique alerts impacting service
         'temperature': 'mean',
-        'shortForecast': lambda x: x.mode()[0] if not x.mode().empty else None
+        'shortForecast': lambda x: x.mode()[0] if not x.mode().empty else None,
+        'alert_reason': lambda x: x.mode()[0] if not x.mode().empty else None
     }).reset_index()
+
+    summary_df = summary_df.rename(columns={
+        'entity_id': 'total_alerts',
+        'shortForecast': 'typical_conditions_that_day',
+        'alert_reason': 'primary_weather_cause'
+    })
 
     print("✅ data summarized")
     return summary_df
@@ -168,6 +187,54 @@ def save(gold_df, summary_df):
 
     engine = get_engine()
     with engine.begin() as conn:
+        # Schema evolution: older rows were written before alert_reason existed.
+        # Add it if missing so the pipeline keeps working against an existing db.
+        # (Not all MySQL versions support "ADD COLUMN IF NOT EXISTS", so check first.)
+        try:
+            existing_cols = pd.read_sql(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gold_transit_weather_fact'",
+                con=conn
+            )
+            if not existing_cols.empty and 'alert_reason' not in existing_cols['COLUMN_NAME'].values:
+                conn.execute(text(
+                    "ALTER TABLE gold_transit_weather_fact ADD COLUMN alert_reason VARCHAR(32)"
+                ))
+        except Exception:
+            pass  # table doesn't exist yet; to_sql will create it with alert_reason included
+
+        # Backfill alert_reason for rows written before this column existed, so
+        # historical alerts (e.g. Hurricane Sandy) also get an attributed cause
+        # instead of just falling out of the reporting view.
+        try:
+            stale = pd.read_sql(
+                "SELECT entity_id, routeId, weather_start, header_text, description_text "
+                "FROM gold_transit_weather_fact WHERE alert_reason IS NULL",
+                con=conn
+            )
+        except Exception:
+            stale = pd.DataFrame()
+
+        if not stale.empty:
+            stale['alert_reason'] = stale.apply(
+                lambda row: extract_alert_reason(row['header_text'], row['description_text']), axis=1
+            )
+            # Rows where neither field matches any known weather term stay NULL -
+            # nothing to backfill for those.
+            stale = stale[stale['alert_reason'].notna()]
+
+        if not stale.empty:
+            update_sql = text("""
+                UPDATE gold_transit_weather_fact
+                SET alert_reason = :alert_reason
+                WHERE entity_id = :entity_id AND routeId = :routeId
+                      AND weather_start = :weather_start AND header_text = :header_text
+                      AND alert_reason IS NULL
+            """)
+            for row in stale.to_dict(orient="records"):
+                conn.execute(update_sql, row)
+            print(f"🔧 Backfilled alert_reason for {len(stale)} existing rows.")
+
         # 2. Fetch existing keys from the database for comparison
         try:
             existing_keys = pd.read_sql(
@@ -204,56 +271,26 @@ def save(gold_df, summary_df):
 
         conn.execute(text("DROP VIEW IF EXISTS view_weather_impact;"))
 
+        # weather_cause is the reason MTA itself gave for the alert (extracted from the
+        # alert text) - this is what actually explains a delay, including the days after
+        # a storm has passed when service is still disrupted by cleanup/recovery.
+        # conditions_at_alert_time / temperature are the point-in-time forecast for extra
+        # context, but are NOT used to determine cause - they'd mislabel a Hurricane Sandy
+        # suspension as "Cloudy" once the storm itself has moved on.
         view_sql = """
         CREATE VIEW view_weather_impact AS
             SELECT
                 routeId,
                 weather_start,
-                CASE
-                    WHEN shortForecast LIKE '%rain%' OR shortForecast LIKE '%showers%' OR shortForecast LIKE '%hurricane%' THEN 'Rain'
-                    WHEN shortForecast LIKE '%Snow%' OR shortForecast LIKE '%blizzard%' THEN 'Snow'
-                    WHEN shortForecast LIKE '%sunny%' OR shortForecast LIKE '%clear%' THEN 'Clear'
-                    ELSE 'Cloudy/Other'
-                END AS weather_category,
-                COUNT(DISTINCT entity_id) AS total_alerts
+                weather_end,
+                alert_reason AS weather_cause,
+                shortForecast AS conditions_at_alert_time,
+                temperature,
+                header_text,
+                description_text
             FROM gold_transit_weather_fact
-            WHERE (
-                LOWER(header_text) LIKE '%weather%'
-                OR LOWER(header_text) LIKE '%heavy rain%'
-                OR LOWER(description_text) LIKE '%light rain%'
-                OR LOWER(description_text) LIKE '%drizzle%'
-                OR LOWER(header_text) LIKE '%snow%'
-                OR LOWER(header_text) LIKE '%flood%'
-                OR LOWER(header_text) LIKE '%wind%'
-                OR LOWER(header_text) LIKE '%storm%'
-                OR LOWER(header_text) LIKE '%icy%'
-                OR LOWER(header_text) LIKE '%icing%'
-                OR LOWER(header_text) LIKE '%hurricane%'
-                OR LOWER(header_text) LIKE '%blizzard%'
-                OR LOWER(header_text) LIKE '%fog%'
-                OR LOWER(header_text) LIKE '%heat%'
-
-
-                OR LOWER(description_text) LIKE '%weather%'
-                OR LOWER(description_text) LIKE '%light rain%'
-                OR LOWER(description_text) LIKE '%drizzle%'
-                OR LOWER(description_text) LIKE '%heavy rain%'
-                OR LOWER(description_text) LIKE '%snow%'
-                OR LOWER(description_text) LIKE '%flood%'
-                OR LOWER(description_text) LIKE '%wind%'
-                OR LOWER(description_text) LIKE '%storm%'
-                OR LOWER(description_text) LIKE '%icy%'
-                OR LOWER(description_text) LIKE '%icing%'
-                OR LOWER(description_text) LIKE '%hurricane%'
-                OR LOWER(description_text) LIKE '%blizzard%'
-                OR LOWER(description_text) LIKE '%fog%'
-                OR LOWER(description_text) LIKE '%heat%'
-            )
-
-            GROUP BY
-                routeId,
-                weather_start,
-                weather_category;
+            WHERE alert_reason IS NOT NULL
+            ORDER BY weather_start, routeId;
         """
 
         conn.execute(text(view_sql))

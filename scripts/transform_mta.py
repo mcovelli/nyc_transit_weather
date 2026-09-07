@@ -6,7 +6,7 @@ import glob
 from datetime import datetime, timedelta
 import re
 from zoneinfo import ZoneInfo
-from mta_constants import keywords
+from weather_cause import extract_alert_reason
 
 @task
 def read_latest_bronze_mta_data():
@@ -108,13 +108,10 @@ def transform_mta_data():
     if all_alerts:
         final_df = pd.concat(all_alerts, ignore_index=True)
 
-        new_keywords = [r'\b' + k + r'\b' if k in ['ice', 'icing', 'icy', 'rain', 'wind'] else k for k in keywords]
-        string = ", ".join(new_keywords)
-        pattern = r'(?i)' + '(' + string.replace(", ", "|") + ')' 
-
-        final_df['alert_reason'] = final_df['description_text'].str.extract(pattern)
+        final_df['alert_reason'] = final_df.apply(
+            lambda row: extract_alert_reason(row['header_text'], row['description_text']), axis=1
+        )
         final_df = final_df[final_df['alert_reason'].notna()]
-        final_df['alert_reason'] = final_df['alert_reason'].str.lower()
 
         return final_df
     else:

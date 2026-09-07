@@ -5,7 +5,7 @@ import os
 import glob
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from mta_constants import keywords
+from weather_cause import extract_alert_reason
 
 @task
 def read_latest_historical_bronze_mta_data():
@@ -65,18 +65,11 @@ def transform_historical_mta_data(mta_data):
     # Enforce the final required column order
     required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text', 'alert_reason']
 
-    mask = clean_hist['description_text'].str.contains(r'\brains?\b', case=False, na=False)
-    clean_hist['alert_reason'] = clean_hist.loc[mask, 'description_text'].str
-    
-
-    new_keywords = [r'\b' + k + r's?\b' if k in ['ice', 'icing', 'icy', 'rain', 'wind'] else k for k in keywords]
-    string = ", ".join(new_keywords)
-    pattern = r'(?i)' + '(' + string.replace(", ", "|") + ')' 
-
-    clean_hist['alert_reason'] = clean_hist['description_text'].str.extract(pattern)
+    clean_hist['alert_reason'] = clean_hist.apply(
+        lambda row: extract_alert_reason(row['header_text'], row['description_text']), axis=1
+    )
     clean_hist = clean_hist[clean_hist['alert_reason'].notna()]
-    clean_hist['alert_reason'] = clean_hist['alert_reason'].str.lower()
-    
+
     # Return only the columns we need, dropping 'agency' and 'status_label'
     return clean_hist[required_columns]
 
