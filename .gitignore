@@ -10,9 +10,20 @@ __pycache__/
 *$py.class
 .pytest_cache/
 
-# Local database and raw tracking files (Cloud handles these now)
+# Local database and raw tracking files
+*.db
 *.db-journal
 *.db-wal
+*.sqlite3
+
+# Local data lake (bronze/silver/gold snapshots) - grows unbounded, stays local only
+data_lakehouse/
+
+# Local run logs
+*.log
+
+# Local secrets / connection config
+.env
 
 # 🔐 SECURITY SAFEGUARD (CRITICAL)
 # This completely blocks your local Google private key file from going public

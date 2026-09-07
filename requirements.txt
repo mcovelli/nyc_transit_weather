@@ -70,6 +70,7 @@ pluggy==1.6.0
 prefect==3.7.2
 prometheus_client==0.25.0
 protobuf==7.35.1
+PyMySQL==1.2.0
 py-key-value-aio==0.4.5
 pyasn1==0.6.3
 pyasn1_modules==0.4.2

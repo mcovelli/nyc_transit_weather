@@ -80,7 +80,8 @@ def transform_mta_data():
             merged_df['end'] = pd.to_datetime(merged_df['end'], unit='s', errors="coerce") # Handle potential invalid timestamps gracefully
         
         # Enforce the required column order
-        required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text', 'alert_reason']
+        # (alert_reason is computed later, once all alerts are concatenated into final_df)
+        required_columns = ['entity_id', 'routeId', 'start', 'end', 'header_text', 'description_text']
         merged_df = merged_df[required_columns]
 
         # Check if there are any null values in the "routeId" column of the merged DataFrame, and if so, attempt to extract a route ID from the header text using a regular expression pattern that matches typical route ID formats, and fill in the "routeId" column for the rows where it is null with the extracted route ID or "SYSTEM_WIDE" if no route ID is found, ensuring that we handle potential missing fields gracefully and provide informative output if no route ID is found in the header text

@@ -2,10 +2,11 @@ import os
 from prefect import task, flow
 import glob
 import pandas as pd
-from sqlite3 import connect
-from contextlib import closing
+from sqlalchemy import text
 import gspread
 import json
+
+from db import get_engine
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 silver_dir = os.path.join(base_dir, "..", "data_lakehouse", "silver")
@@ -154,27 +155,19 @@ def summarize(gold_df):
     print("✅ data summarized")
     return summary_df
 
-@task  
+@task
 def save(gold_df, summary_df):
     if gold_df.empty:
         print("No overlapping weather/transit data found in this run. Skipping save.")
         return
-
-    db_path = os.path.join(base_dir, "..", "data_lakehouse", "nyc_transit_weather.db")
-
-@task  
-def save(gold_df, summary_df):
-    if gold_df.empty:
-        return
-
-    db_path = os.path.join(base_dir, "..", "data_lakehouse", "nyc_transit_weather.db")
 
     # 1. Prepare the gold_df with a stable Composite Key
     # We round to 15 minutes to ignore micro-jitter in API timestamps
     gold_df = gold_df.copy()
     gold_df['weather_start'] = pd.to_datetime(gold_df['weather_start'], utc=True).dt.round('15min')
 
-    with closing(connect(db_path)) as conn:
+    engine = get_engine()
+    with engine.begin() as conn:
         # 2. Fetch existing keys from the database for comparison
         try:
             existing_keys = pd.read_sql(
@@ -184,23 +177,23 @@ def save(gold_df, summary_df):
             existing_keys['weather_start'] = pd.to_datetime(existing_keys['weather_start'], utc=True)
         except Exception:
             existing_keys = pd.DataFrame(columns=['entity_id', 'routeId', 'weather_start', 'header_text'])
-        
+
         # 3. Perform Left Anti-Join (Merge with indicator)
         # This identifies rows in gold_df that do NOT have a match in existing_keys
         merged = pd.merge(
-            gold_df, 
-            existing_keys, 
-            on=['entity_id', 'routeId', 'weather_start', 'header_text'], 
-            how='left', 
+            gold_df,
+            existing_keys,
+            on=['entity_id', 'routeId', 'weather_start', 'header_text'],
+            how='left',
             indicator=True
         )
-        
-        # 4. Filter to get only new records
-        new_only = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge', 'weather_start'])
+
+        # 4. Filter to get only new records (keep the original gold_df columns only)
+        new_only = merged.loc[merged['_merge'] == 'left_only', gold_df.columns]
 
         if not new_only.empty:
             # Insert only the new, granular data
-            merged.to_sql('gold_transit_weather_fact', conn, if_exists='append', index=False)
+            new_only.to_sql('gold_transit_weather_fact', conn, if_exists='append', index=False)
             print(f"✅ Added {len(new_only)} new unique rows to Fact Table.")
         else:
             print("ℹ️ No new records to append. Database is up to date.")
@@ -208,17 +201,15 @@ def save(gold_df, summary_df):
         if not summary_df.empty:
             summary_df.to_sql('gold_daily_transit_weather_summary', conn, if_exists='replace', index=False)
             print(f"Updated summary data in gold_daily_transit_weather_summary.")
-        
-        cursor = conn.cursor()
 
-        cursor.execute("DROP VIEW IF EXISTS view_weather_impact;")
+        conn.execute(text("DROP VIEW IF EXISTS view_weather_impact;"))
 
         view_sql = """
-        CREATE VIEW view_weather_impact AS 
-            SELECT 
-                routeId, 
-                weather_start, 
-                CASE 
+        CREATE VIEW view_weather_impact AS
+            SELECT
+                routeId,
+                weather_start,
+                CASE
                     WHEN shortForecast LIKE '%rain%' OR shortForecast LIKE '%showers%' OR shortForecast LIKE '%hurricane%' THEN 'Rain'
                     WHEN shortForecast LIKE '%Snow%' OR shortForecast LIKE '%blizzard%' THEN 'Snow'
                     WHEN shortForecast LIKE '%sunny%' OR shortForecast LIKE '%clear%' THEN 'Clear'
@@ -241,7 +232,7 @@ def save(gold_df, summary_df):
                 OR LOWER(header_text) LIKE '%blizzard%'
                 OR LOWER(header_text) LIKE '%fog%'
                 OR LOWER(header_text) LIKE '%heat%'
-                
+
 
                 OR LOWER(description_text) LIKE '%weather%'
                 OR LOWER(description_text) LIKE '%light rain%'
@@ -259,13 +250,13 @@ def save(gold_df, summary_df):
                 OR LOWER(description_text) LIKE '%heat%'
             )
 
-            GROUP BY 
-                routeId, 
+            GROUP BY
+                routeId,
                 weather_start,
                 weather_category;
         """
 
-        cursor.execute(view_sql)
+        conn.execute(text(view_sql))
         print("📊 Reporting View 'view_weather_impact' successfully rebuilt.")
 
         filename = f"view_weather_impact.csv"
@@ -275,23 +266,23 @@ def save(gold_df, summary_df):
         os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
 
         df = pd.read_sql("SELECT * FROM view_weather_impact", conn)
-        
+
         if df.empty:
             print("Empty table, nothing to export")
         else:
-            df.to_csv(output_file_path, index=False) 
+            df.to_csv(output_file_path, index=False)
             print("📁 CSV Export successful.")
 
 @task(name="Sync View to Google Sheets")
 def sync_view_to_google_sheets():
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(base_dir, "..", "data_lakehouse", "nyc_transit_weather.db")
-    
-    # Pull the fresh semantic view data out of SQLite
-    print("🔄 Extracting reporting view from SQLite...")
-    with closing(connect(db_path)) as conn:
+
+    # Pull the fresh semantic view data out of MySQL
+    print("🔄 Extracting reporting view from MySQL...")
+    engine = get_engine()
+    with engine.connect() as conn:
         df = pd.read_sql("SELECT * FROM view_weather_impact", conn)
-    
+
     if df.empty:
         print("⚠️ Reporting view is empty. Skipping upload.")
         return
@@ -319,8 +310,12 @@ def sync_view_to_google_sheets():
     worksheet = sh.get_worksheet(0) # Selects the first tab
     
     # Format DataFrame to a list of lists that gspread accepts
-    # Replace NaN values with strings so json serialization doesn't crash
-    df_clean = df.fillna("")
+    # Stringify datetime columns (Timestamp objects aren't JSON serializable),
+    # then replace NaN values with strings so json serialization doesn't crash
+    df_clean = df.copy()
+    for col in df_clean.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns:
+        df_clean[col] = df_clean[col].astype(str)
+    df_clean = df_clean.fillna("")
     data_to_upload = [df_clean.columns.values.tolist()] + df_clean.values.tolist()
     
     print("🚀 Overwriting Google Sheet with fresh hourly analytics data...")
@@ -343,7 +338,10 @@ def gold_pipeline():
         
         # Load
         save(gold_df, summary_df)
-        sync_view_to_google_sheets()
+        try:
+            sync_view_to_google_sheets()
+        except Exception as e:
+            print(f"⚠️ Google Sheets sync failed, continuing without it: {e}")
     else:
         print("Pipeline Stopped. Core files missing from Silver layer.")
 
