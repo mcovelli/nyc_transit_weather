@@ -203,37 +203,54 @@ def save(gold_df, summary_df):
         except Exception:
             pass  # table doesn't exist yet; to_sql will create it with alert_reason included
 
-        # Backfill alert_reason for rows written before this column existed, so
-        # historical alerts (e.g. Hurricane Sandy) also get an attributed cause
-        # instead of just falling out of the reporting view.
+        # Re-classify every existing row against the current extraction logic, not
+        # just ones with a NULL alert_reason. Keyword logic keeps improving (e.g. the
+        # "flood protection" construction-project false positive, or the nor'easter
+        # fix) and rows written under an older version of that logic would otherwise
+        # keep a stale cause forever. Rows that no longer match anything are removed
+        # entirely, consistent with how already-confirmed non-weather rows were
+        # purged from this table.
         try:
-            stale = pd.read_sql(
-                "SELECT entity_id, routeId, weather_start, header_text, description_text "
-                "FROM gold_transit_weather_fact WHERE alert_reason IS NULL",
+            existing_rows = pd.read_sql(
+                "SELECT entity_id, routeId, weather_start, header_text, description_text, alert_reason "
+                "FROM gold_transit_weather_fact",
                 con=conn
             )
         except Exception:
-            stale = pd.DataFrame()
+            existing_rows = pd.DataFrame()
 
-        if not stale.empty:
-            stale['alert_reason'] = stale.apply(
+        if not existing_rows.empty:
+            existing_rows['new_reason'] = existing_rows.apply(
                 lambda row: extract_alert_reason(row['header_text'], row['description_text']), axis=1
             )
-            # Rows where neither field matches any known weather term stay NULL -
-            # nothing to backfill for those.
-            stale = stale[stale['alert_reason'].notna()]
+            old_reason = existing_rows['alert_reason']
+            new_reason = existing_rows['new_reason']
+            unchanged = (old_reason == new_reason) | (old_reason.isna() & new_reason.isna())
+            changed = existing_rows[~unchanged]
 
-        if not stale.empty:
-            update_sql = text("""
-                UPDATE gold_transit_weather_fact
-                SET alert_reason = :alert_reason
-                WHERE entity_id = :entity_id AND routeId = :routeId
-                      AND weather_start = :weather_start AND header_text = :header_text
-                      AND alert_reason IS NULL
-            """)
-            for row in stale.to_dict(orient="records"):
-                conn.execute(update_sql, row)
-            print(f"🔧 Backfilled alert_reason for {len(stale)} existing rows.")
+            to_delete = changed[changed['new_reason'].isna()]
+            to_update = changed[changed['new_reason'].notna()]
+
+            if not to_delete.empty:
+                delete_sql = text("""
+                    DELETE FROM gold_transit_weather_fact
+                    WHERE entity_id = :entity_id AND routeId = :routeId
+                          AND weather_start = :weather_start AND header_text = :header_text
+                """)
+                for row in to_delete.to_dict(orient="records"):
+                    conn.execute(delete_sql, row)
+                print(f"🔧 Removed {len(to_delete)} rows that no longer match any weather cause.")
+
+            if not to_update.empty:
+                update_sql = text("""
+                    UPDATE gold_transit_weather_fact
+                    SET alert_reason = :new_reason
+                    WHERE entity_id = :entity_id AND routeId = :routeId
+                          AND weather_start = :weather_start AND header_text = :header_text
+                """)
+                for row in to_update.to_dict(orient="records"):
+                    conn.execute(update_sql, row)
+                print(f"🔧 Re-classified alert_reason for {len(to_update)} rows.")
 
         # 2. Fetch existing keys from the database for comparison
         try:
