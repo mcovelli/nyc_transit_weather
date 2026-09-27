@@ -16,7 +16,9 @@ headers = {
     }
 
 # Task to fetch MTA alerts from the API
-@task
+# Retries with backoff: this job often fires right as the Mac wakes from sleep,
+# before DNS/networking has fully come back up.
+@task(retries=3, retry_delay_seconds=[15, 30, 60])
 def fetch_mta_alerts():
     response = requests.get(url, headers=headers)
     if response.status_code == 200:

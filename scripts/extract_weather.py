@@ -14,7 +14,9 @@ headers = {
 }
 
 # Task to fetch grid points and forecast URL from the NWS API
-@task
+# Retries with backoff: this job often fires right as the Mac wakes from sleep,
+# before DNS/networking has fully come back up.
+@task(retries=3, retry_delay_seconds=[15, 30, 60])
 def fetch_grid_points():
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
@@ -28,8 +30,8 @@ def fetch_grid_points():
         print(f"Failed to fetch grid points: {response.status_code}")
         return None
 
-# Task to fetch the hourly forecast data from the NWS API using the forecast URL    
-@task
+# Task to fetch the hourly forecast data from the NWS API using the forecast URL
+@task(retries=3, retry_delay_seconds=[15, 30, 60])
 def fetch_forecast_data(forecast_url):
     if forecast_url:
         forecast_response = requests.get(forecast_url, headers=headers)
