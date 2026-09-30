@@ -2,16 +2,18 @@ import requests
 import json
 from prefect import flow, task
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-# Open-Meteo Historical API for NYC (2012)
-# We are grabbing hourly temperature, precipitation, and weather codes
-URL = "https://archive-api.open-meteo.com/v1/archive?latitude=40.7128&longitude=-74.0061&start_date=2012-01-01&end_date=2019-12-31&hourly=temperature_2m,precipitation,weather_code"
+# Open-Meteo Historical API for NYC. end_date is always "yesterday" - the
+# archive only has finalized (quality-controlled) data up to that point, so
+# this stays current on every run instead of stopping at a fixed past date.
+_END_DATE = (datetime.now(tz=ZoneInfo('America/New_York')) - timedelta(days=1)).strftime('%Y-%m-%d')
+URL = f"https://archive-api.open-meteo.com/v1/archive?latitude=40.7128&longitude=-74.0061&start_date=2012-01-01&end_date={_END_DATE}&hourly=temperature_2m,precipitation,weather_code"
 
 @task
 def fetch_historical_weather():
-    print("Fetching historical weather data for 2012 through 2019...")
+    print(f"Fetching historical weather data from 2012-01-01 through {_END_DATE}...")
     response = requests.get(URL)
     if response.status_code == 200:
         return response.json()

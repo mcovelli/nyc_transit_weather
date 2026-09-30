@@ -5,39 +5,65 @@ from prefect import flow, task
 import os
 from zoneinfo import ZoneInfo
 
-# API endpoint for Historical MTA Subway Delays
-url = "https://data.ny.gov/resource/3h5b-5ktz.json"
+# NY State publishes MTA alert history as two separate, non-overlapping datasets:
+# - "MTA Service Alerts: 2012 - 2020" (3h5b-5ktz): frozen, agency = 'Subway',
+#   id field = status_id (a UUID)
+# - "MTA Service Alerts: Beginning April 2020" (7kct-peq7): actively published
+#   but lags real time by ~6-7 weeks, agency = 'NYCT Subway', id field =
+#   alert_id (a plain number)
+# Fetching only one of these (as this script used to) silently caps historical
+# coverage at whichever dataset you picked. Fetch both every time so a single
+# backfill run always produces the full available range.
+DATASETS = [
+    {
+        "url": "https://data.ny.gov/resource/3h5b-5ktz.json",
+        "agency": "Subway",
+    },
+    {
+        "url": "https://data.ny.gov/resource/7kct-peq7.json",
+        "agency": "NYCT Subway",
+    },
+]
 
 # Custom User-Agent header to identify the application making the request
 headers = {
     "User-Agent": "NYC Transit Weather Pipeline (mcovelli@duck.com)"
 }
 
+_WEATHER_TERMS_WHERE = (
+    "(header LIKE '%storm%' OR header LIKE '%snow%' OR header LIKE '%flood%' OR header LIKE '%weather%' "
+    "OR header LIKE '%wind%' OR header LIKE '%blizzard%' OR header LIKE '%hurricane%' OR header LIKE '%heavy rain%' "
+    "OR header LIKE '% rain%' OR header LIKE '%icy%' OR header LIKE '%icing%') "
+    "OR (description LIKE '%storm%' OR description LIKE '%snow%' OR description LIKE '%flood%' OR description LIKE '%weather%' "
+    "OR description LIKE '%wind%' OR description LIKE '%blizzard%' OR description LIKE '%hurricane%' OR description LIKE '%heavy rain%' "
+    "OR description LIKE '% rain%' OR description LIKE '%icy%' OR description LIKE '%icing%')"
+)
+
 # Task to fetch Historical MTA alerts from the API
 @task
 def fetch_mta_data():
     all_rows = []
-    offset = 0
-    limit = 50000
-    
-    while True:
 
-        params = {
-            "$where": "agency = 'Subway' AND ((header LIKE '%storm%' OR header LIKE '%snow%' OR header LIKE '%flood%' OR header LIKE '%weather%' OR header LIKE '%wind%' OR header LIKE '%blizzard%' OR header LIKE '%hurricane%' OR header LIKE '%heavy rain%' OR header LIKE '% rain%' OR header LIKE '%icy%' OR header LIKE '%icing%') OR (description LIKE '%storm%' OR description LIKE '%snow%' OR description LIKE '%flood%' OR description LIKE '%weather%' OR description LIKE '%wind%' OR description LIKE '%blizzard%' OR description LIKE '%hurricane%' OR description LIKE '%heavy rain%' OR description LIKE '% rain%' OR description LIKE '%icy%' OR description LIKE '%icing%'))",
-            "$limit": 50000,
-            "$offset": offset
-        }
-        
-        response = requests.get(url, headers=headers, params=params)
-        if response.status_code != 200:
-            break
-        else:
+    for dataset in DATASETS:
+        offset = 0
+        limit = 50000
+
+        while True:
+            params = {
+                "$where": f"agency = '{dataset['agency']}' AND ({_WEATHER_TERMS_WHERE})",
+                "$limit": limit,
+                "$offset": offset
+            }
+
+            response = requests.get(dataset["url"], headers=headers, params=params)
+            if response.status_code != 200:
+                break
             data = response.json()
             all_rows.extend(data)
-        if len(data) < limit:
-            break
-        else:
+            if len(data) < limit:
+                break
             offset += limit
+
     return all_rows
 
 # Task to save the raw forecast data to a JSON file in the data lakehouse

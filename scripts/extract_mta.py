@@ -45,6 +45,9 @@ def save_mta_raw(feed):
     filename = f"mta_alerts_{timestamp}.json"
     full_file_path = os.path.join(relative_path, "..", "data_lakehouse", "bronze", filename)
 
+    # data_lakehouse/ is gitignored, so a fresh clone won't have this directory yet
+    os.makedirs(os.path.dirname(full_file_path), exist_ok=True)
+
     with open(full_file_path, "w") as f:
             f.write(json_data)
             print(f"MTA alert data saved to {filename}")

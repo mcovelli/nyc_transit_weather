@@ -1,7 +1,7 @@
 import re
 from mta_constants import keywords
 
-_NEEDS_PLURAL_BOUNDARY = {'ice', 'icing', 'icy', 'rain', 'wind'}
+_NEEDS_PLURAL_BOUNDARY = {'ice', 'icing', 'icy', 'rain', 'wind', 'fog', 'heat', 'sleet', 'hail'}
 
 # Named storm types get spelled/punctuated inconsistently ("nor'easter", "noreaster",
 # "nor-easter", "northeaster") - normalize all of them to one label and check first,

@@ -107,6 +107,13 @@ def combine_tables(weather_data, mta_data):
             mta_data[col] = pd.NA
     mta_data_aligned = mta_data[required_columns].copy()
 
+    # Historical entity_id values are purely numeric (e.g. "513765"), so pandas
+    # infers them as int64 when read from CSV, while MySQL always returns
+    # entity_id as str on read-back. That dtype mismatch makes the anti-join in
+    # save() fail to recognize already-inserted historical rows as existing,
+    # re-inserting the whole batch as "new" on every run. Force str everywhere.
+    mta_data_aligned['entity_id'] = mta_data_aligned['entity_id'].astype(str)
+
     # Recompute alert_reason directly from the alert text rather than trusting
     # whatever is already in the silver CSV - some older snapshots predate
     # weather-filtering entirely and would otherwise let non-weather alerts

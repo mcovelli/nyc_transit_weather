@@ -141,15 +141,59 @@ The Gold pipeline can also push the `view_weather_impact` report to a Google She
 
 ---
 
+## Backfill historical data (recommended for a fresh clone)
+
+The live MTA feed only shows *currently active* alerts — if you just run the live pipeline and there's no weather event happening right now, your Gold database will stay empty until one occurs. To get real data immediately instead of waiting, backfill historical weather-related alerts and weather history first:
+
+```bash
+cd ~/nyc_transit_weather
+source venv/bin/activate
+python -c "
+import sys
+sys.path.insert(0, 'scripts')
+from extract_historical_mta import historical_mta_bronze_pipeline
+from transform_historical_mta import historical_mta_silver_pipeline
+from extract_historical_weather import historical_weather_bronze_pipeline
+from transform_historical_weather import historical_weather_silver_pipeline
+historical_mta_bronze_pipeline()
+historical_mta_silver_pipeline()
+historical_weather_bronze_pipeline()
+historical_weather_silver_pipeline()
+"
+```
+
+- **Weather**: pulled from [Open-Meteo's archive API](https://open-meteo.com/en/docs/historical-weather-api), which covers 2012 through yesterday — always current, no gaps.
+- **MTA alerts**: pulled from *two* NY State public datasets, merged into one file, because neither alone covers the full range:
+  - ["MTA Service Alerts: 2012 - 2020"](https://data.ny.gov/resource/3h5b-5ktz.json) — frozen, never updated past March 2020.
+  - ["MTA Service Alerts: Beginning April 2020"](https://data.ny.gov/resource/7kct-peq7.json) — its continuation, actively published but lagging real time by roughly 6-8 weeks.
+
+### Why is there a gap in the data (currently 5/22/2026 - 9/26/2026)?
+
+This is the unavoidable seam between the two sources above, not a bug:
+
+1. The historical MTA dataset's last **weather-matching** alert is from 5/21/2026. The raw dataset does have rows past that date, but none of them happen to mention a weather term our filter catches — so nothing from late May through whenever the dataset was last published qualifies.
+2. That dataset is only published every 6-8 weeks, so anything from roughly the last ~2 months never has historical data available yet, regardless of what actually happened.
+3. This pipeline's own live polling (the thing that closes the gap permanently) only started running on 9/7/2026, and the first weather-related MTA alert it happened to catch live was a nor'easter on 9/26/2026.
+
+In short: nothing between 5/22 and ~9/7 can be backfilled from any source (the archive hasn't published it yet, and no one was polling live at the time); nothing between ~9/7 and 9/26 is a gap so much as there being no live weather-related alert during that window. The gap will keep shrinking from both ends as the archive dataset catches up and your own live polling accumulates.
+
+Then run the regular pipeline once to load everything into MySQL:
+
+```bash
+python scripts/main_2.py
+```
+
 ## Generate data on demand
 
-- Run `main_2.py` if you want to generate new data through the entire pipeline one time.
+- Run `main_2.py` any time you want to generate new data through the entire live pipeline one time.
 
 ```bash
 cd ~/nyc_transit_weather
 source venv/bin/activate
 python scripts/main_2.py
 ```
+
+If there's no weather-related MTA alert active at the moment you run this, you'll see `Pipeline Stopped. Core files missing from Silver layer.` — that's expected, not an error; it means nothing weather-related is happening on the subway right now. It'll pick up data automatically the next time a real weather event occurs, or you can backfill historical data (above) to see the pipeline working with real data right away.
 
 ## Schedule data updates (twice a day)
 

@@ -33,10 +33,23 @@ def transform_historical_mta_data(mta_data):
 
     if mta_data is None or mta_data.empty:
         return pd.DataFrame()
-    
+
+    # The two source datasets use different id fields (status_id for the older
+    # frozen 2012-2020 set, alert_id for its 2020+ continuation) - coalesce
+    # whichever is present into one entity_id before the rest of the rename.
+    # Always cast to str: alert_id is purely numeric and would otherwise be
+    # read as int64, which silently breaks the anti-join dedup against MySQL
+    # (which always returns entity_id as str) and causes duplicate inserts.
+    id_col = pd.Series(pd.NA, index=mta_data.index, dtype="object")
+    if 'status_id' in mta_data.columns:
+        id_col = id_col.fillna(mta_data['status_id'])
+    if 'alert_id' in mta_data.columns:
+        id_col = id_col.fillna(mta_data['alert_id'])
+    mta_data = mta_data.drop(columns=[c for c in ('status_id', 'alert_id') if c in mta_data.columns])
+    mta_data['entity_id'] = id_col.astype(str)
+
     # Rename columns to match the Live MTA Data Contract
     clean_hist = mta_data.rename(columns={
-        'status_id': 'entity_id',
         'date': 'start',
         'affected': 'routeId',
         'header': 'header_text',
